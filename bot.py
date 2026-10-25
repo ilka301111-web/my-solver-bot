@@ -31,17 +31,17 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # ЖЕСТКИЙ ПРОМПТ: только инструмент для списывания
+    # Промпт: вежливый, обычный, но без воды
     system_prompt = {
         "role": "system", 
-        "content": "Ты — инструмент для решения задач. Твоя цель — выдать готовый ответ для списывания. Никаких приветствий, объяснений и лишних слов. Только сухие шаги решения (если они нужны) и итоговый ответ. Формулы пиши обычным текстом без сложных символов."
+        "content": "Ты — дружелюбный и умный помощник. Общайся вежливо, как обычный человек, но не пиши длинных вступлений и лишних слов. Если просят просто ответ — напиши только ответ. Если просят решить задачу — напиши краткое решение по шагам и итоговый ответ. Формулы пиши обычным текстом (без LaTeX)."
     }
     
     payload = {
         "model": MODEL_NAME,
         "messages": [system_prompt] + parts,
         "max_tokens": 2000,
-        "temperature": 0.1 # Минимум креатива, максимум точности
+        "temperature": 0.4 
     }
     
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
@@ -51,27 +51,27 @@ async def ask_aiai(parts: list) -> str:
                 
                 if "error" in data:
                     print("ОШИБКА ОТ API:", data["error"])
-                    return "Ошибка сервера ИИ."
+                    return "Извини, произошла ошибка на сервере. Попробуй еще раз."
                 
                 if "choices" in data and len(data["choices"]) > 0:
                     content = data["choices"][0]["message"].get("content")
                     if content and content.strip():
                         return content.strip()
                 
-                return "Не удалось распознать."
+                return "Извини, не могу разобрать, что тут написано. Сфотографируй получше."
         except asyncio.TimeoutError:
-            return "Превышено время ожидания."
+            return "Извини, я задумался. Попробуй еще раз."
         except Exception as e:
             print("ОШИБКА:", e)
-            return "Ошибка при обращении к ИИ."
+            return "Ой, что-то пошло не так. Попробуй позже."
 
 async def solve_photo(image_bytes: bytes, history: list) -> str:
     b64 = base64.b64encode(image_bytes).decode('utf-8')
     
+    # Просим решить все задачи с фото
     prompt = """Реши задания с фото. 
-    Выдай ответы так, чтобы их можно было сразу переписать в тетрадь. 
-    Если нужно решение — напиши его кратко. Если просят просто ответ — дай ответ. 
-    Указывай номера заданий, если их несколько."""
+    Если нужно решение — напиши его кратко (по шагам). В конце дай ответ.
+    Если заданий несколько — пронумеруй их (1., 2. и т.д.)."""
     
     current_message = {
         "role": "user", 
@@ -89,8 +89,8 @@ async def chat_text(user_text: str, history: list) -> str:
 
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📸 Списáть по фото")],
-        [KeyboardButton(text="✏️ Написать вопрос")]
+        [KeyboardButton(text="📸 Решить по фото")],
+        [KeyboardButton(text="✏️ Задать вопрос")]
     ],
     resize_keyboard=True
 )
@@ -123,7 +123,7 @@ async def handle_photo(message: Message):
         file_bytes = await bot.download_file(file.file_path)
         solution = await solve_photo(file_bytes.read(), history)
         
-        update_history(user_id, "user", "[Фото задачи]")
+        update_history(user_id, "user", "[Пользователь прислал фото задачи]")
         update_history(user_id, "assistant", solution)
         
         if len(solution) > 4000:
@@ -135,7 +135,7 @@ async def handle_photo(message: Message):
             
     except Exception as e:
         print(f"Ошибка: {e}")
-        await message.answer("Ошибка. Попробуй еще раз.")
+        await message.answer("Извини, не смог обработать фото. Попробуй еще раз.")
 
 @dp.message(F.text)
 async def handle_text(message: Message):
@@ -145,11 +145,11 @@ async def handle_text(message: Message):
     text = message.text
     if text == "/start":
         user_histories[user_id] = []
-        await message.answer("Отправь фото задания или напиши вопрос.", reply_markup=main_menu)
+        await message.answer("Привет! 👋 Я твой ИИ-помощник. Отправь мне фото задания или напиши вопрос, и я помогу.", reply_markup=main_menu)
         return
         
-    if text in ["📸 Списáть по фото", "✏️ Написать вопрос"]:
-        await message.answer("Жду фото или текст.", reply_markup=main_menu)
+    if text in ["📸 Решить по фото", "✏️ Задать вопрос"]:
+        await message.answer("Кидай фото или пиши вопрос.", reply_markup=main_menu)
         return
 
     if user_id in user_cooldowns and now - user_cooldowns[user_id] < 5:
@@ -171,7 +171,7 @@ async def handle_text(message: Message):
 
 async def main():
     print("====================================")
-    print("БОТ ЗАПУЩЕН! РЕЖИМ: ИНСТРУМЕНТ ДЛЯ СПИСЫВАНИЯ.")
+    print("БОТ ЗАПУЩЕН! ОБЫЧНЫЙ И ВЕЖЛИВЫЙ.")
     print("====================================")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
