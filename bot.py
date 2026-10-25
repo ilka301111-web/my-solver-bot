@@ -35,17 +35,17 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # Универсальный промпт: адаптируется под предмет
+    # Разрешаем думать, но требуем четкости
     system_prompt = {
         "role": "system", 
-        "content": "Ты — умный школьный помощник. Твоя задача — дать готовый ответ для списывания. Отвечай очень кратко, без лишней воды и вступлений. Если предмет точный (математика, физика, химия) — пиши сухо, только формулы и действия, без слов. Если предмет гуманитарный (история, биология, языки) — пиши краткий текст, но без рассуждений. Если на фото несколько заданий, нумеруй их."
+        "content": "Ты — эксперт по решению школьных заданий (это домашняя работа). Твоя задача — дать правильные ответы. Внимательно прочитай задание на фото. Если это тест — выбери правильный вариант и кратко поясни почему (1 предложение). Если это задача — напиши краткое решение. Не пиши длинных вступлений и 'воды'. Твой ответ должен быть готов для переписывания в тетрадь."
     }
     
     payload = {
         "model": MODEL_NAME,
         "messages": [system_prompt] + parts,
         "max_tokens": 1500, 
-        "temperature": 0.2 
+        "temperature": 0.1 # Минимум фантазии, только факты
     }
     
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
@@ -68,8 +68,8 @@ async def ask_aiai(parts: list) -> str:
 async def solve_photo(image_bytes: bytes, history: list) -> str:
     b64 = base64.b64encode(image_bytes).decode('utf-8')
     prompt = """Реши все задания с фото. 
-    Дай готовый ответ, который можно переписать. 
-    Без вступлений и лишних слов."""
+    Прочитай каждое задание. Выдай правильный ответ. Если нужно, напиши короткое обоснование. 
+    Нумеруй ответы так же, как в задании."""
     
     current_message = {
         "role": "user", 
@@ -130,7 +130,7 @@ async def handle_photo(message: Message):
         file = await bot.get_file(message.photo[-1].file_id)
         file_bytes = await bot.download_file(file.file_path)
         
-        # Сжатие (оставляем четким, чтобы читало)
+        # Сжатие (оставляем четким)
         img = Image.open(io.BytesIO(file_bytes.read()))
         img.thumbnail((1600, 1600)) 
         output = io.BytesIO()
@@ -155,7 +155,7 @@ async def handle_text(message: Message):
     text = message.text
     if text == "/start":
         user_histories[user_id] = []
-        await message.answer("Привет! Отправь фото задания, и я выдам готовое решение. Без лишних слов. (Лимит: 15 фото в день).", reply_markup=main_menu)
+        await message.answer("Привет! Отправь фото задания, и я выдам правильный ответ с кратким пояснением. (Лимит: 15 фото в день).", reply_markup=main_menu)
         return
         
     if text in ["📸 Решить по фото", "✏️ Задать вопрос"]:
@@ -179,7 +179,7 @@ async def handle_text(message: Message):
 
 async def main():
     print("====================================")
-    print("БОТ ЗАПУЩЕН! УНИВЕРСАЛЬНЫЙ РЕЖИМ.")
+    print("БОТ ЗАПУЩЕН! УМНЫЙ РЕЖИМ ДЛЯ ТЕСТОВ.")
     print("====================================")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
