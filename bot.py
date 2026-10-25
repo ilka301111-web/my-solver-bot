@@ -35,22 +35,22 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # Разрешаем думать, но требуем четкости
+    # ЖЕСТКИЙ ПРОМПТ: Заставляем читать текст перед ответом
     system_prompt = {
         "role": "system", 
-        "content": "Ты — эксперт по решению школьных заданий (это домашняя работа). Твоя задача — дать правильные ответы. Внимательно прочитай задание на фото. Если это тест — выбери правильный вариант и кратко поясни почему (1 предложение). Если это задача — напиши краткое решение. Не пиши длинных вступлений и 'воды'. Твой ответ должен быть готов для переписывания в тетрадь."
+        "content": "Ты — эксперт по решению тестов и задач. Это домашняя работа. Твоя задача — дать ИДЕАЛЬНО ТОЧНЫЕ ответы. ЗАПРЕЩЕНО угадывать! Сначала ты должен прочитать задание с фото, выписать его условие текстом (чтобы доказать, что прочитал), а затем дать логически обоснованный ответ. Если это тест, напиши номер вопроса, текст вопроса, правильный вариант и краткое пояснение почему. Не ленись читать весь текст на картинке."
     }
     
     payload = {
         "model": MODEL_NAME,
         "messages": [system_prompt] + parts,
-        "max_tokens": 1500, 
-        "temperature": 0.1 # Минимум фантазии, только факты
+        "max_tokens": 3000, # Увеличили лимит, чтобы он мог расписать весь тест
+        "temperature": 0.1 
     }
     
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
         try:
-            async with session.post(AIAI_URL, json=payload, headers=headers, timeout=60) as resp:
+            async with session.post(AIAI_URL, json=payload, headers=headers, timeout=90) as resp: # Увеличили таймаут
                 data = await resp.json()
                 
                 if "error" in data:
@@ -67,9 +67,10 @@ async def ask_aiai(parts: list) -> str:
 
 async def solve_photo(image_bytes: bytes, history: list) -> str:
     b64 = base64.b64encode(image_bytes).decode('utf-8')
-    prompt = """Реши все задания с фото. 
-    Прочитай каждое задание. Выдай правильный ответ. Если нужно, напиши короткое обоснование. 
-    Нумеруй ответы так же, как в задании."""
+    prompt = """Внимательно рассмотри фото. 
+    1. Прочитай текст заданий.
+    2. Реши каждое задание логически (без угадывания).
+    3. Напиши номер задания и правильный ответ. Если это тест, укажи номер варианта и кратко поясни."""
     
     current_message = {
         "role": "user", 
@@ -130,11 +131,11 @@ async def handle_photo(message: Message):
         file = await bot.get_file(message.photo[-1].file_id)
         file_bytes = await bot.download_file(file.file_path)
         
-        # Сжатие (оставляем четким)
+        # Сжатие (оставляем очень четким)
         img = Image.open(io.BytesIO(file_bytes.read()))
-        img.thumbnail((1600, 1600)) 
+        img.thumbnail((2000, 2000)) # Увеличили до 2000 пикселей для мелкого текста
         output = io.BytesIO()
-        img.convert('RGB').save(output, format='JPEG', quality=90) 
+        img.convert('RGB').save(output, format='JPEG', quality=95) 
         image_data = output.getvalue()
 
         solution = await solve_photo(image_data, history)
@@ -144,7 +145,8 @@ async def handle_photo(message: Message):
         
         await message.answer(solution, reply_markup=main_menu)
             
-    except Exception:
+    except Exception as e:
+        print(e)
         await message.answer("Ошибка. Попробуй еще раз.")
 
 @dp.message(F.text)
@@ -155,7 +157,7 @@ async def handle_text(message: Message):
     text = message.text
     if text == "/start":
         user_histories[user_id] = []
-        await message.answer("Привет! Отправь фото задания, и я выдам правильный ответ с кратким пояснением. (Лимит: 15 фото в день).", reply_markup=main_menu)
+        await message.answer("Привет! Отправь фото задания, и я выдам точный ответ. (Лимит: 15 фото в день).", reply_markup=main_menu)
         return
         
     if text in ["📸 Решить по фото", "✏️ Задать вопрос"]:
@@ -179,7 +181,7 @@ async def handle_text(message: Message):
 
 async def main():
     print("====================================")
-    print("БОТ ЗАПУЩЕН! УМНЫЙ РЕЖИМ ДЛЯ ТЕСТОВ.")
+    print("БОТ ЗАПУЩЕН! РЕЖИМ ГЛУБОКОГО ЧТЕНИЯ.")
     print("====================================")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
