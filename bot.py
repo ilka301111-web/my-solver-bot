@@ -35,22 +35,22 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # ЖЕСТКИЙ ПРОМПТ: Заставляем читать текст перед ответом
+    # Убираем жесткие запреты, просим "подумать" перед ответом
     system_prompt = {
         "role": "system", 
-        "content": "Ты — эксперт по решению тестов и задач. Это домашняя работа. Твоя задача — дать ИДЕАЛЬНО ТОЧНЫЕ ответы. ЗАПРЕЩЕНО угадывать! Сначала ты должен прочитать задание с фото, выписать его условие текстом (чтобы доказать, что прочитал), а затем дать логически обоснованный ответ. Если это тест, напиши номер вопроса, текст вопроса, правильный вариант и краткое пояснение почему. Не ленись читать весь текст на картинке."
+        "content": "Ты — эксперт по решению школьных заданий. Твоя задача — помочь ученику с домашней работой. Внимательно прочитай задание на фото. Если это тест, определи правильный вариант, выбрав его логически (не угадывай). Сначала напиши краткий ход мысли (почему ты выбрал этот вариант), а затем сам ответ. Если задача по математике/физике — напиши краткое решение. Не пиши длинных вступлений."
     }
     
     payload = {
         "model": MODEL_NAME,
         "messages": [system_prompt] + parts,
-        "max_tokens": 3000, # Увеличили лимит, чтобы он мог расписать весь тест
+        "max_tokens": 2500, 
         "temperature": 0.1 
     }
     
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
         try:
-            async with session.post(AIAI_URL, json=payload, headers=headers, timeout=90) as resp: # Увеличили таймаут
+            async with session.post(AIAI_URL, json=payload, headers=headers, timeout=90) as resp:
                 data = await resp.json()
                 
                 if "error" in data:
@@ -67,10 +67,9 @@ async def ask_aiai(parts: list) -> str:
 
 async def solve_photo(image_bytes: bytes, history: list) -> str:
     b64 = base64.b64encode(image_bytes).decode('utf-8')
-    prompt = """Внимательно рассмотри фото. 
-    1. Прочитай текст заданий.
-    2. Реши каждое задание логически (без угадывания).
-    3. Напиши номер задания и правильный ответ. Если это тест, укажи номер варианта и кратко поясни."""
+    prompt = """Реши задания с фото. 
+    Прочитай каждое задание. Если это тест, выбери правильный вариант и кратко объясни почему. 
+    Если это задача, напиши решение. Нумеруй ответы так же, как в задании."""
     
     current_message = {
         "role": "user", 
@@ -131,11 +130,11 @@ async def handle_photo(message: Message):
         file = await bot.get_file(message.photo[-1].file_id)
         file_bytes = await bot.download_file(file.file_path)
         
-        # Сжатие (оставляем очень четким)
+        # Сжатие (оставляем четким)
         img = Image.open(io.BytesIO(file_bytes.read()))
-        img.thumbnail((2000, 2000)) # Увеличили до 2000 пикселей для мелкого текста
+        img.thumbnail((1600, 1600)) 
         output = io.BytesIO()
-        img.convert('RGB').save(output, format='JPEG', quality=95) 
+        img.convert('RGB').save(output, format='JPEG', quality=90) 
         image_data = output.getvalue()
 
         solution = await solve_photo(image_data, history)
@@ -145,8 +144,7 @@ async def handle_photo(message: Message):
         
         await message.answer(solution, reply_markup=main_menu)
             
-    except Exception as e:
-        print(e)
+    except Exception:
         await message.answer("Ошибка. Попробуй еще раз.")
 
 @dp.message(F.text)
@@ -157,7 +155,7 @@ async def handle_text(message: Message):
     text = message.text
     if text == "/start":
         user_histories[user_id] = []
-        await message.answer("Привет! Отправь фото задания, и я выдам точный ответ. (Лимит: 15 фото в день).", reply_markup=main_menu)
+        await message.answer("Привет! Отправь фото задания, и я выдам решение с пояснением. (Лимит: 15 фото в день).", reply_markup=main_menu)
         return
         
     if text in ["📸 Решить по фото", "✏️ Задать вопрос"]:
@@ -180,8 +178,9 @@ async def handle_text(message: Message):
     await message.answer(answer[:4000], reply_markup=main_menu)
 
 async def main():
-    print("====================================")
-    print("БОТ ЗАПУЩЕН! РЕЖИМ ГЛУБОКОГО ЧТЕНИЯ.")
-    print("====================================")
+    print("БОТ ЗАПУЩЕН! РЕЖИМ ПОНИМАНИЯ.")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
