@@ -5,6 +5,9 @@ import certifi
 import aiohttp
 import time
 import os
+import io
+from datetime import datetime
+from PIL import Image
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
@@ -17,12 +20,16 @@ dp = Dispatcher()
 
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 AIAI_URL = "https://api.aiai.by/v1/chat/completions"
-
 MODEL_NAME = "gpt-4o-mini" 
 
 processed_messages = set()
 user_cooldowns = {}
 user_histories = {}
+
+# --- ЭКОНОМИЯ: ДНЕВНОЙ ЛИМИТ ЗАПРОСОВ ---
+user_daily_requests = {} # {user_id: {"date": "2026-10-26", "count": 5}}
+DAILY_LIMIT = 15 # Максимум 15 фото в день на одного человека
+
 MAX_HISTORY = 6
 
 async def ask_aiai(parts: list) -> str:
@@ -31,16 +38,16 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # ЖЕСТКИЙ ЛИМИТ НА ДЛИНУ
+    # Жесткий лимит на длину ответа
     system_prompt = {
         "role": "system", 
-        "content": "Ты — вежливый ИИ-помощник. Отвечай максимально кратко. Если задача простая — пиши только ответ (например: 5). Если сложная — напиши 1-2 шага решения и ответ. КАТЕГОРИЧЕСКИ запрещено писать длинные объяснения, приветствия (кроме первого) и рассуждения. Вода и лишние слова удаляются."
+        "content": "Ты — вежливый ИИ-помощник. Отвечай максимально кратко. Если задача простая — пиши только ответ. Если сложная — напиши 1-2 шага решения и ответ. КАТЕГОРИЧЕСКИ запрещено писать длинные объяснения, приветствия и рассуждения."
     }
     
     payload = {
         "model": MODEL_NAME,
         "messages": [system_prompt] + parts,
-        "max_tokens": 600, # СИЛЬНО УРЕЗАЛИ ЛИМИТ ТОКЕНОВ (чтобы физически не мог написать много)
+        "max_tokens": 600,
         "temperature": 0.2 
     }
     
@@ -67,10 +74,7 @@ async def ask_aiai(parts: list) -> str:
 
 async def solve_photo(image_bytes: bytes, history: list) -> str:
     b64 = base64.b64encode(image_bytes).decode('utf-8')
-    
-    prompt = """Реши задания с фото. 
-    Пиши ТОЛЬКО краткое решение (максимум 2-3 действия на задачу) и итоговый ответ.
-    Никаких вступлений и лишних слов."""
+    prompt = """Реши задания с фото. Пиши ТОЛЬКО краткое решение и ответ. Никаких вступлений."""
     
     current_message = {
         "role": "user", 
@@ -79,7 +83,6 @@ async def solve_photo(image_bytes: bytes, history: list) -> str:
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
         ]
     }
-    
     return await ask_aiai(history + [current_message])
 
 async def chat_text(user_text: str, history: list) -> str:
@@ -101,16 +104,34 @@ def update_history(user_id: int, role: str, content: str):
     if len(user_histories[user_id]) > MAX_HISTORY:
         user_histories[user_id] = user_histories[user_id][-MAX_HISTORY:]
 
+# Функция проверки дневного лимита
+def check_daily_limit(user_id: int) -> bool:
+    today = datetime.now().strftime("%Y-%m-%d")
+    if user_id not in user_daily_requests or user_daily_requests[user_id]["date"] != today:
+        user_daily_requests[user_id] = {"date": today, "count": 0}
+    
+    if user_daily_requests[user_id]["count"] >= DAILY_LIMIT:
+        return False # Лимит исчерпан
+    
+    user_daily_requests[user_id]["count"] += 1
+    return True # Можно решать
+
 @dp.message(F.photo)
 async def handle_photo(message: Message):
     user_id = message.from_user.id
     now = time.time()
     
+    # Проверка антиспама (5 секунд)
     if user_id in user_cooldowns and now - user_cooldowns[user_id] < 5:
         wait_time = int(5 - (now - user_cooldowns[user_id]))
         await message.answer(f"⏳ Подожди {wait_time} сек.")
         return
     
+    # Проверка дневного лимита
+    if not check_daily_limit(user_id):
+        await message.answer(f"На сегодня лимит задач исчерпан (макс. {DAILY_LIMIT} в день). Приходи завтра!")
+        return
+
     user_cooldowns[user_id] = now
     
     if message.message_id in processed_messages: return
@@ -120,18 +141,21 @@ async def handle_photo(message: Message):
         history = user_histories.get(user_id, [])
         file = await bot.get_file(message.photo[-1].file_id)
         file_bytes = await bot.download_file(file.file_path)
-        solution = await solve_photo(file_bytes.read(), history)
+        
+        # --- ЭКОНОМИЯ: СЖАТИЕ ФОТО ---
+        img = Image.open(io.BytesIO(file_bytes.read()))
+        img.thumbnail((800, 800)) # Уменьшаем размер картинки
+        output = io.BytesIO()
+        img.convert('RGB').save(output, format='JPEG', quality=75) # Сжимаем
+        image_data = output.getvalue()
+        # -----------------------------
+
+        solution = await solve_photo(image_data, history)
         
         update_history(user_id, "user", "[Пользователь прислал фото задачи]")
         update_history(user_id, "assistant", solution)
         
-        # Если ответ вдруг длинный, бот разобьет его на части (но теперь это редкость)
-        if len(solution) > 4000:
-            for i in range(0, len(solution), 4000):
-                await message.answer(solution[i:i+4000], reply_markup=main_menu)
-                await asyncio.sleep(0.5)
-        else:
-            await message.answer(solution, reply_markup=main_menu)
+        await message.answer(solution, reply_markup=main_menu)
             
     except Exception as e:
         print(f"Ошибка: {e}")
@@ -145,7 +169,7 @@ async def handle_text(message: Message):
     text = message.text
     if text == "/start":
         user_histories[user_id] = []
-        await message.answer("Привет! Отправь фото задания или напиши вопрос. Отвечаю кратко и по делу.", reply_markup=main_menu)
+        await message.answer("Привет! Отправь фото задания или напиши вопрос. Отвечаю кратко. (Лимит: 15 фото в день).", reply_markup=main_menu)
         return
         
     if text in ["📸 Решить по фото", "✏️ Задать вопрос"]:
@@ -171,7 +195,7 @@ async def handle_text(message: Message):
 
 async def main():
     print("====================================")
-    print("БОТ ЗАПУЩЕН! СУПЕР-КРАТКИЙ РЕЖИМ.")
+    print("БОТ ЗАПУЩЕН! ЭКОНОМНЫЙ РЕЖИМ (ЛИМИТ 15 ФОТО/ДЕНЬ).")
     print("====================================")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
