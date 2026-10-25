@@ -11,7 +11,7 @@ from PIL import Image
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
-# Ключи из настроек Render
+# Ключи из настроек Render (используем старый AIAI_KEY)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 AIAI_KEY = os.getenv("AIAI_KEY")
 
@@ -20,7 +20,9 @@ dp = Dispatcher()
 
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 AIAI_URL = "https://api.aiai.by/v1/chat/completions"
-MODEL_NAME = "gpt-4o-mini" 
+
+# СМЕНА МОДЕЛИ НА NEX (дешевле GPT, видит фото)
+MODEL_NAME = "nex-n2.5-mini" 
 
 processed_messages = set()
 user_cooldowns = {}
@@ -35,16 +37,16 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # Убираем жесткие запреты, просим "подумать" перед ответом
+    # Промпт: прямо просим решить, без "домашки" и "тестов"
     system_prompt = {
         "role": "system", 
-        "content": "Ты — эксперт по решению школьных заданий. Твоя задача — помочь ученику с домашней работой. Внимательно прочитай задание на фото. Если это тест, определи правильный вариант, выбрав его логически (не угадывай). Сначала напиши краткий ход мысли (почему ты выбрал этот вариант), а затем сам ответ. Если задача по математике/физике — напиши краткое решение. Не пиши длинных вступлений."
+        "content": "Ты — эксперт по решению задач. Внимательно прочитай текст на фото и реши все задания. Если это тест, выбери правильный вариант и кратко поясни. Если задача — напиши решение. Не пиши длинных вступлений."
     }
     
     payload = {
         "model": MODEL_NAME,
         "messages": [system_prompt] + parts,
-        "max_tokens": 2500, 
+        "max_tokens": 3000, # Даем место для ответа на весь тест
         "temperature": 0.1 
     }
     
@@ -54,6 +56,7 @@ async def ask_aiai(parts: list) -> str:
                 data = await resp.json()
                 
                 if "error" in data:
+                    print("ОШИБКА ОТ API:", data["error"])
                     return "Ошибка сервера."
                 
                 if "choices" in data and len(data["choices"]) > 0:
@@ -62,14 +65,14 @@ async def ask_aiai(parts: list) -> str:
                         return content.strip()
                 
                 return "Не могу разобрать."
-        except Exception:
+        except Exception as e:
+            print("ОШИБКА:", e)
             return "Ошибка."
 
 async def solve_photo(image_bytes: bytes, history: list) -> str:
     b64 = base64.b64encode(image_bytes).decode('utf-8')
-    prompt = """Реши задания с фото. 
-    Прочитай каждое задание. Если это тест, выбери правильный вариант и кратко объясни почему. 
-    Если это задача, напиши решение. Нумеруй ответы так же, как в задании."""
+    prompt = """Реши все задания с фото. 
+    Прочитай каждое задание. Выдай правильный ответ. Если нужно, напиши короткое обоснование."""
     
     current_message = {
         "role": "user", 
@@ -130,11 +133,11 @@ async def handle_photo(message: Message):
         file = await bot.get_file(message.photo[-1].file_id)
         file_bytes = await bot.download_file(file.file_path)
         
-        # Сжатие (оставляем четким)
+        # Оставляем четким для OCR
         img = Image.open(io.BytesIO(file_bytes.read()))
-        img.thumbnail((1600, 1600)) 
+        img.thumbnail((2000, 2000)) 
         output = io.BytesIO()
-        img.convert('RGB').save(output, format='JPEG', quality=90) 
+        img.convert('RGB').save(output, format='JPEG', quality=95) 
         image_data = output.getvalue()
 
         solution = await solve_photo(image_data, history)
@@ -144,7 +147,8 @@ async def handle_photo(message: Message):
         
         await message.answer(solution, reply_markup=main_menu)
             
-    except Exception:
+    except Exception as e:
+        print(e)
         await message.answer("Ошибка. Попробуй еще раз.")
 
 @dp.message(F.text)
@@ -155,7 +159,7 @@ async def handle_text(message: Message):
     text = message.text
     if text == "/start":
         user_histories[user_id] = []
-        await message.answer("Привет! Отправь фото задания, и я выдам решение с пояснением. (Лимит: 15 фото в день).", reply_markup=main_menu)
+        await message.answer("Привет! Отправь фото задания. Я решу.", reply_markup=main_menu)
         return
         
     if text in ["📸 Решить по фото", "✏️ Задать вопрос"]:
@@ -178,7 +182,7 @@ async def handle_text(message: Message):
     await message.answer(answer[:4000], reply_markup=main_menu)
 
 async def main():
-    print("БОТ ЗАПУЩЕН! РЕЖИМ ПОНИМАНИЯ.")
+    print("БОТ ЗАПУЩЕН! NEX N2.5 MINI")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
