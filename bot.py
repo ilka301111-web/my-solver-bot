@@ -25,8 +25,6 @@ MODEL_NAME = "gpt-4o-mini"
 processed_messages = set()
 user_cooldowns = {}
 user_histories = {}
-
-# --- ЭКОНОМИЯ: ДНЕВНОЙ ЛИМИТ ЗАПРОСОВ ---
 user_daily_requests = {}
 DAILY_LIMIT = 15 
 MAX_HISTORY = 6
@@ -37,16 +35,16 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # Убираем запреты, добавляем "домашку"
+    # Универсальный промпт: адаптируется под предмет
     system_prompt = {
         "role": "system", 
-        "content": "Ты — умный помощник по учебе. Твоя задача — помогать ученикам с их ДОМАШНИМ ЗАДАНИЕМ. Отвечай кратко: только шаги решения (если нужно) и итоговый ответ. Не пиши длинных вступлений."
+        "content": "Ты — умный школьный помощник. Твоя задача — дать готовый ответ для списывания. Отвечай очень кратко, без лишней воды и вступлений. Если предмет точный (математика, физика, химия) — пиши сухо, только формулы и действия, без слов. Если предмет гуманитарный (история, биология, языки) — пиши краткий текст, но без рассуждений. Если на фото несколько заданий, нумеруй их."
     }
     
     payload = {
         "model": MODEL_NAME,
         "messages": [system_prompt] + parts,
-        "max_tokens": 600,
+        "max_tokens": 1500, 
         "temperature": 0.2 
     }
     
@@ -56,25 +54,22 @@ async def ask_aiai(parts: list) -> str:
                 data = await resp.json()
                 
                 if "error" in data:
-                    print("ОШИБКА ОТ API:", data["error"])
-                    return "Ошибка сервера. Попробуй еще раз."
+                    return "Ошибка сервера."
                 
                 if "choices" in data and len(data["choices"]) > 0:
                     content = data["choices"][0]["message"].get("content")
                     if content and content.strip():
                         return content.strip()
                 
-                return "Не могу разобрать. Сфотографируй получше."
-        except asyncio.TimeoutError:
-            return "Я задумался. Попробуй еще раз."
-        except Exception as e:
-            print("ОШИБКА:", e)
-            return "Ошибка. Попробуй позже."
+                return "Не могу разобрать."
+        except Exception:
+            return "Ошибка."
 
 async def solve_photo(image_bytes: bytes, history: list) -> str:
     b64 = base64.b64encode(image_bytes).decode('utf-8')
-    # Прямо говорим, что это домашка
-    prompt = """Это домашнее задание. Реши задания с фото. Напиши ТОЛЬКО краткое решение и ответ. Никаких вступлений."""
+    prompt = """Реши все задания с фото. 
+    Дай готовый ответ, который можно переписать. 
+    Без вступлений и лишних слов."""
     
     current_message = {
         "role": "user", 
@@ -108,10 +103,8 @@ def check_daily_limit(user_id: int) -> bool:
     today = datetime.now().strftime("%Y-%m-%d")
     if user_id not in user_daily_requests or user_daily_requests[user_id]["date"] != today:
         user_daily_requests[user_id] = {"date": today, "count": 0}
-    
     if user_daily_requests[user_id]["count"] >= DAILY_LIMIT:
         return False
-    
     user_daily_requests[user_id]["count"] += 1
     return True
 
@@ -121,12 +114,10 @@ async def handle_photo(message: Message):
     now = time.time()
     
     if user_id in user_cooldowns and now - user_cooldowns[user_id] < 5:
-        wait_time = int(5 - (now - user_cooldowns[user_id]))
-        await message.answer(f"⏳ Подожди {wait_time} сек.")
         return
     
     if not check_daily_limit(user_id):
-        await message.answer(f"На сегодня лимит задач исчерпан (макс. {DAILY_LIMIT} в день). Приходи завтра!")
+        await message.answer(f"Лимит {DAILY_LIMIT} фото в день исчерпан.")
         return
 
     user_cooldowns[user_id] = now
@@ -139,25 +130,22 @@ async def handle_photo(message: Message):
         file = await bot.get_file(message.photo[-1].file_id)
         file_bytes = await bot.download_file(file.file_path)
         
-        # --- ЭКОНОМИЯ: СЖАТИЕ ФОТО ---
+        # Сжатие (оставляем четким, чтобы читало)
         img = Image.open(io.BytesIO(file_bytes.read()))
-        # Увеличили размер до 1024 и качество до 85, чтобы текст был четче
-        img.thumbnail((1024, 1024)) 
+        img.thumbnail((1600, 1600)) 
         output = io.BytesIO()
-        img.convert('RGB').save(output, format='JPEG', quality=85) 
+        img.convert('RGB').save(output, format='JPEG', quality=90) 
         image_data = output.getvalue()
-        # -----------------------------
 
         solution = await solve_photo(image_data, history)
         
-        update_history(user_id, "user", "[Пользователь прислал фото задачи]")
+        update_history(user_id, "user", "[Пользователь прислал фото]")
         update_history(user_id, "assistant", solution)
         
         await message.answer(solution, reply_markup=main_menu)
             
-    except Exception as e:
-        print(f"Ошибка: {e}")
-        await message.answer("Не смог обработать фото. Попробуй еще раз.")
+    except Exception:
+        await message.answer("Ошибка. Попробуй еще раз.")
 
 @dp.message(F.text)
 async def handle_text(message: Message):
@@ -167,7 +155,7 @@ async def handle_text(message: Message):
     text = message.text
     if text == "/start":
         user_histories[user_id] = []
-        await message.answer("Привет! Отправь фото задания или напиши вопрос. Отвечаю кратко. (Лимит: 15 фото в день).", reply_markup=main_menu)
+        await message.answer("Привет! Отправь фото задания, и я выдам готовое решение. Без лишних слов. (Лимит: 15 фото в день).", reply_markup=main_menu)
         return
         
     if text in ["📸 Решить по фото", "✏️ Задать вопрос"]:
@@ -175,8 +163,6 @@ async def handle_text(message: Message):
         return
 
     if user_id in user_cooldowns and now - user_cooldowns[user_id] < 5:
-        wait_time = int(5 - (now - user_cooldowns[user_id]))
-        await message.answer(f"⏳ Подожди {wait_time} сек.")
         return
     user_cooldowns[user_id] = now
 
@@ -193,10 +179,7 @@ async def handle_text(message: Message):
 
 async def main():
     print("====================================")
-    print("БОТ ЗАПУЩЕН! ОБХОД ФИЛЬТРОВ + СЖАТИЕ.")
+    print("БОТ ЗАПУЩЕН! УНИВЕРСАЛЬНЫЙ РЕЖИМ.")
     print("====================================")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
