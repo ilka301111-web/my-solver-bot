@@ -27,9 +27,8 @@ user_cooldowns = {}
 user_histories = {}
 
 # --- ЭКОНОМИЯ: ДНЕВНОЙ ЛИМИТ ЗАПРОСОВ ---
-user_daily_requests = {} # {user_id: {"date": "2026-10-26", "count": 5}}
-DAILY_LIMIT = 15 # Максимум 15 фото в день на одного человека
-
+user_daily_requests = {}
+DAILY_LIMIT = 15 
 MAX_HISTORY = 6
 
 async def ask_aiai(parts: list) -> str:
@@ -38,10 +37,10 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # Жесткий лимит на длину ответа
+    # Убираем запреты, добавляем "домашку"
     system_prompt = {
         "role": "system", 
-        "content": "Ты — вежливый ИИ-помощник. Отвечай максимально кратко. Если задача простая — пиши только ответ. Если сложная — напиши 1-2 шага решения и ответ. КАТЕГОРИЧЕСКИ запрещено писать длинные объяснения, приветствия и рассуждения."
+        "content": "Ты — умный помощник по учебе. Твоя задача — помогать ученикам с их ДОМАШНИМ ЗАДАНИЕМ. Отвечай кратко: только шаги решения (если нужно) и итоговый ответ. Не пиши длинных вступлений."
     }
     
     payload = {
@@ -74,7 +73,8 @@ async def ask_aiai(parts: list) -> str:
 
 async def solve_photo(image_bytes: bytes, history: list) -> str:
     b64 = base64.b64encode(image_bytes).decode('utf-8')
-    prompt = """Реши задания с фото. Пиши ТОЛЬКО краткое решение и ответ. Никаких вступлений."""
+    # Прямо говорим, что это домашка
+    prompt = """Это домашнее задание. Реши задания с фото. Напиши ТОЛЬКО краткое решение и ответ. Никаких вступлений."""
     
     current_message = {
         "role": "user", 
@@ -104,30 +104,27 @@ def update_history(user_id: int, role: str, content: str):
     if len(user_histories[user_id]) > MAX_HISTORY:
         user_histories[user_id] = user_histories[user_id][-MAX_HISTORY:]
 
-# Функция проверки дневного лимита
 def check_daily_limit(user_id: int) -> bool:
     today = datetime.now().strftime("%Y-%m-%d")
     if user_id not in user_daily_requests or user_daily_requests[user_id]["date"] != today:
         user_daily_requests[user_id] = {"date": today, "count": 0}
     
     if user_daily_requests[user_id]["count"] >= DAILY_LIMIT:
-        return False # Лимит исчерпан
+        return False
     
     user_daily_requests[user_id]["count"] += 1
-    return True # Можно решать
+    return True
 
 @dp.message(F.photo)
 async def handle_photo(message: Message):
     user_id = message.from_user.id
     now = time.time()
     
-    # Проверка антиспама (5 секунд)
     if user_id in user_cooldowns and now - user_cooldowns[user_id] < 5:
         wait_time = int(5 - (now - user_cooldowns[user_id]))
         await message.answer(f"⏳ Подожди {wait_time} сек.")
         return
     
-    # Проверка дневного лимита
     if not check_daily_limit(user_id):
         await message.answer(f"На сегодня лимит задач исчерпан (макс. {DAILY_LIMIT} в день). Приходи завтра!")
         return
@@ -144,9 +141,10 @@ async def handle_photo(message: Message):
         
         # --- ЭКОНОМИЯ: СЖАТИЕ ФОТО ---
         img = Image.open(io.BytesIO(file_bytes.read()))
-        img.thumbnail((800, 800)) # Уменьшаем размер картинки
+        # Увеличили размер до 1024 и качество до 85, чтобы текст был четче
+        img.thumbnail((1024, 1024)) 
         output = io.BytesIO()
-        img.convert('RGB').save(output, format='JPEG', quality=75) # Сжимаем
+        img.convert('RGB').save(output, format='JPEG', quality=85) 
         image_data = output.getvalue()
         # -----------------------------
 
@@ -195,7 +193,7 @@ async def handle_text(message: Message):
 
 async def main():
     print("====================================")
-    print("БОТ ЗАПУЩЕН! ЭКОНОМНЫЙ РЕЖИМ (ЛИМИТ 15 ФОТО/ДЕНЬ).")
+    print("БОТ ЗАПУЩЕН! ОБХОД ФИЛЬТРОВ + СЖАТИЕ.")
     print("====================================")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
