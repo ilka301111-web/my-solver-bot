@@ -11,7 +11,7 @@ from PIL import Image
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
-# Ключи из настроек Render (используем старый AIAI_KEY)
+# Ключи из настроек Render
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 AIAI_KEY = os.getenv("AIAI_KEY")
 
@@ -21,8 +21,8 @@ dp = Dispatcher()
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 AIAI_URL = "https://api.aiai.by/v1/chat/completions"
 
-# СМЕНА МОДЕЛИ НА NEX (дешевле GPT, видит фото)
-MODEL_NAME = "nex-n2.5-mini" 
+# Пробуем новое имя модели. Если не увидит фото, заменим на deepseek-v4-flash-vision-exp
+MODEL_NAME = "deepseek-flash" 
 
 processed_messages = set()
 user_cooldowns = {}
@@ -37,16 +37,15 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # Промпт: прямо просим решить, без "домашки" и "тестов"
     system_prompt = {
         "role": "system", 
-        "content": "Ты — эксперт по решению задач. Внимательно прочитай текст на фото и реши все задания. Если это тест, выбери правильный вариант и кратко поясни. Если задача — напиши решение. Не пиши длинных вступлений."
+        "content": "Ты — эксперт по решению задач. Внимательно прочитай текст на фото. Если это тест, выбери правильный вариант и кратко поясни. Если задача — напиши решение. Не пиши длинных вступлений."
     }
     
     payload = {
         "model": MODEL_NAME,
         "messages": [system_prompt] + parts,
-        "max_tokens": 3000, # Даем место для ответа на весь тест
+        "max_tokens": 3000, 
         "temperature": 0.1 
     }
     
@@ -133,7 +132,6 @@ async def handle_photo(message: Message):
         file = await bot.get_file(message.photo[-1].file_id)
         file_bytes = await bot.download_file(file.file_path)
         
-        # Оставляем четким для OCR
         img = Image.open(io.BytesIO(file_bytes.read()))
         img.thumbnail((2000, 2000)) 
         output = io.BytesIO()
@@ -182,7 +180,7 @@ async def handle_text(message: Message):
     await message.answer(answer[:4000], reply_markup=main_menu)
 
 async def main():
-    print("БОТ ЗАПУЩЕН! NEX N2.5 MINI")
+    print("БОТ ЗАПУЩЕН! DEEPSEEK FLASH")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
