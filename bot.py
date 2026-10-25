@@ -8,7 +8,7 @@ import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
-# Ключи берутся из настроек сервера Render
+# Ключи из настроек Render
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 AIAI_KEY = os.getenv("AIAI_KEY")
 
@@ -17,7 +17,8 @@ dp = Dispatcher()
 
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 AIAI_URL = "https://api.aiai.by/v1/chat/completions"
-MODEL_NAME = "gemma-3-12b-it" 
+
+MODEL_NAME = "gpt-4o-mini" 
 
 processed_messages = set()
 user_cooldowns = {}
@@ -30,16 +31,17 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # ЖЕСТКИЙ ПРОМПТ: только ответы
+    # ЖЕСТКИЙ ПРОМПТ: только инструмент для списывания
     system_prompt = {
         "role": "system", 
-        "content": "Ты — школьный ИИ. Твоя задача — решать задачи, но выдавать ТОЛЬКО финальные ответы. Категорически запрещено писать шаги решения, объяснения или приветствия. Если в задаче несколько пунктов, пиши их списком: '1. Ответ: ...', '2. Ответ: ...'. Никакой воды и лишних слов."
+        "content": "Ты — инструмент для решения задач. Твоя цель — выдать готовый ответ для списывания. Никаких приветствий, объяснений и лишних слов. Только сухие шаги решения (если они нужны) и итоговый ответ. Формулы пиши обычным текстом без сложных символов."
     }
     
     payload = {
         "model": MODEL_NAME,
         "messages": [system_prompt] + parts,
-        "max_tokens": 1000 # Уменьшили лимит, так как ответы теперь короткие
+        "max_tokens": 2000,
+        "temperature": 0.1 # Минимум креатива, максимум точности
     }
     
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
@@ -49,16 +51,16 @@ async def ask_aiai(parts: list) -> str:
                 
                 if "error" in data:
                     print("ОШИБКА ОТ API:", data["error"])
-                    return "Ошибка сервера ИИ. Подожди немного."
+                    return "Ошибка сервера ИИ."
                 
                 if "choices" in data and len(data["choices"]) > 0:
                     content = data["choices"][0]["message"].get("content")
                     if content and content.strip():
                         return content.strip()
                 
-                return "ИИ не смог дать ответ."
+                return "Не удалось распознать."
         except asyncio.TimeoutError:
-            return "ИИ слишком долго думал. Попробуй еще раз."
+            return "Превышено время ожидания."
         except Exception as e:
             print("ОШИБКА:", e)
             return "Ошибка при обращении к ИИ."
@@ -66,7 +68,10 @@ async def ask_aiai(parts: list) -> str:
 async def solve_photo(image_bytes: bytes, history: list) -> str:
     b64 = base64.b64encode(image_bytes).decode('utf-8')
     
-    prompt = """Реши все задания с фото. Выдай ТОЛЬКО краткие ответы по номерам (1. ..., 2. ...). Никаких решений и объяснений."""
+    prompt = """Реши задания с фото. 
+    Выдай ответы так, чтобы их можно было сразу переписать в тетрадь. 
+    Если нужно решение — напиши его кратко. Если просят просто ответ — дай ответ. 
+    Указывай номера заданий, если их несколько."""
     
     current_message = {
         "role": "user", 
@@ -84,8 +89,8 @@ async def chat_text(user_text: str, history: list) -> str:
 
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📸 Решить по фото")],
-        [KeyboardButton(text="✏️ Задать вопрос")]
+        [KeyboardButton(text="📸 Списáть по фото")],
+        [KeyboardButton(text="✏️ Написать вопрос")]
     ],
     resize_keyboard=True
 )
@@ -118,14 +123,19 @@ async def handle_photo(message: Message):
         file_bytes = await bot.download_file(file.file_path)
         solution = await solve_photo(file_bytes.read(), history)
         
-        update_history(user_id, "user", "[Пользователь прислал фото задачи]")
+        update_history(user_id, "user", "[Фото задачи]")
         update_history(user_id, "assistant", solution)
         
-        await message.answer(solution, reply_markup=main_menu)
+        if len(solution) > 4000:
+            for i in range(0, len(solution), 4000):
+                await message.answer(solution[i:i+4000], reply_markup=main_menu)
+                await asyncio.sleep(0.5)
+        else:
+            await message.answer(solution, reply_markup=main_menu)
             
     except Exception as e:
         print(f"Ошибка: {e}")
-        await message.answer("Ошибка при обработке. Попробуй еще раз.")
+        await message.answer("Ошибка. Попробуй еще раз.")
 
 @dp.message(F.text)
 async def handle_text(message: Message):
@@ -135,11 +145,11 @@ async def handle_text(message: Message):
     text = message.text
     if text == "/start":
         user_histories[user_id] = []
-        await message.answer("Привет! Отправь фото задачи или напиши вопрос. Я выдам только ответы.", reply_markup=main_menu)
+        await message.answer("Отправь фото задания или напиши вопрос.", reply_markup=main_menu)
         return
         
-    if text in ["📸 Решить по фото", "✏️ Задать вопрос"]:
-        await message.answer("Кидай фото или пиши вопрос.", reply_markup=main_menu)
+    if text in ["📸 Списáть по фото", "✏️ Написать вопрос"]:
+        await message.answer("Жду фото или текст.", reply_markup=main_menu)
         return
 
     if user_id in user_cooldowns and now - user_cooldowns[user_id] < 5:
@@ -161,7 +171,7 @@ async def handle_text(message: Message):
 
 async def main():
     print("====================================")
-    print("БОТ ЗАПУЩЕН! РЕЖИМ: ТОЛЬКО ОТВЕТЫ.")
+    print("БОТ ЗАПУЩЕН! РЕЖИМ: ИНСТРУМЕНТ ДЛЯ СПИСЫВАНИЯ.")
     print("====================================")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
