@@ -21,7 +21,7 @@ dp = Dispatcher()
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 AIAI_URL = "https://api.aiai.by/v1/chat/completions"
 
-# СТАВИМ НОВУЮ МОДЕЛЬ GPT-6 LUNA
+# ТВОЯ МОДЕЛЬ
 MODEL_NAME = "gpt-6-luna-pro" 
 
 processed_messages = set()
@@ -37,16 +37,16 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # Промпт: "рабочая тетрадь", только ответы, вежливость
+    # ПРОМПТ: Запрет LaTeX и четкий ответ
     system_prompt = {
         "role": "system", 
-        "content": "Ты — умный и вежливый ИИ-помощник. Твоя задача — помогать с учебными материалами (рабочая тетрадь, повторение). Если пользователь просто общается, отвечай дружелюбно. Если пользователь прислал фото с заданиями — внимательно прочитай их и выдай ТОЛЬКО конечные ответы по номерам (например: 1. Б, 2. А, 3. 5). Не пиши объяснений и шагов решения, если об этом не просят напрямую!"
+        "content": "Ты — умный ИИ-помощник. Реши задания с фото и выдай ТОЛЬКО конечные ответы. ВАЖНО: КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО использовать LaTeX (никаких \\frac, \\sqrt, \\( и т.д.). Пиши обычным текстом: дроби через слэш (/), корни через 'корень из', степени через ^. Будь вежливым."
     }
     
     payload = {
         "model": MODEL_NAME,
         "messages": [system_prompt] + parts,
-        "max_tokens": 2000, # Даем место для ответов на весь тест
+        "max_tokens": 2000, 
         "temperature": 0.1 
     }
     
@@ -64,17 +64,16 @@ async def ask_aiai(parts: list) -> str:
                     if content and content.strip():
                         return content.strip()
                 
-                return "Не могу разобрать."
+                return "Не могу разобрать. Попробуй сфотографировать ближе или обрезать фото."
         except Exception as e:
             print("ОШИБКА:", e)
             return "Ошибка."
 
 async def solve_photo(image_bytes: bytes, history: list) -> str:
     b64 = base64.b64encode(image_bytes).decode('utf-8')
-    prompt = """Вот учебный материал из рабочей тетради. 
-    Внимательно прочитай задания на фото. 
-    Напиши ТОЛЬКО конечные ответы (например: 1. В, 2. Б). 
-    Никаких объяснений и рассуждений."""
+    prompt = """Реши задания с фото. 
+    Напиши ТОЛЬКО ответы по номерам (например: 1.178 а) -5, б) 2). 
+    Никаких объяснений и символов LaTeX."""
     
     current_message = {
         "role": "user", 
@@ -160,7 +159,7 @@ async def handle_text(message: Message):
     text = message.text
     if text == "/start":
         user_histories[user_id] = []
-        await message.answer("Привет! 👋 Отправь фото задания, и я выдам готовые ответы.", reply_markup=main_menu)
+        await message.answer("Привет! 👋 Отправь фото задания (лучше обрезанное), и я выдам готовые ответы без лишних символов.", reply_markup=main_menu)
         return
         
     if text in ["📸 Решить по фото", "✏️ Задать вопрос"]:
@@ -183,7 +182,7 @@ async def handle_text(message: Message):
     await message.answer(answer[:4000], reply_markup=main_menu)
 
 async def main():
-    print("БОТ ЗАПУЩЕН! GPT-6 LUNA")
+    print("БОТ ЗАПУЩЕН! LUNA PRO БЕЗ LATEX")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
