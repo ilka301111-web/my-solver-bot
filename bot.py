@@ -22,7 +22,7 @@ ssl_context = ssl.create_default_context(cafile=certifi.where())
 AIAI_URL = "https://api.aiai.by/v1/chat/completions"
 
 # СТАВИМ НОВУЮ МОДЕЛЬ GPT-6 LUNA
-MODEL_NAME = "gpt-6-luna" 
+MODEL_NAME = "gpt-6-luna-pro" 
 
 processed_messages = set()
 user_cooldowns = {}
