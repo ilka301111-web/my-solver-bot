@@ -21,8 +21,8 @@ dp = Dispatcher()
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 AIAI_URL = "https://api.aiai.by/v1/chat/completions"
 
-# ТВОЯ МОДЕЛЬ
-MODEL_NAME = "gpt-6-luna-pro" 
+# СТАВИМ ОБЫЧНУЮ ЛУНУ
+MODEL_NAME = "gpt-6-luna" 
 
 processed_messages = set()
 user_cooldowns = {}
@@ -37,10 +37,9 @@ async def ask_aiai(parts: list) -> str:
         "Content-Type": "application/json"
     }
     
-    # ПРОМПТ: Запрет LaTeX и четкий ответ
     system_prompt = {
         "role": "system", 
-        "content": "Ты — умный ИИ-помощник. Реши задания с фото и выдай ТОЛЬКО конечные ответы. ВАЖНО: КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО использовать LaTeX (никаких \\frac, \\sqrt, \\( и т.д.). Пиши обычным текстом: дроби через слэш (/), корни через 'корень из', степени через ^. Будь вежливым."
+        "content": "Ты — умный помощник. Внимательно прочитай задание на фото. Реши его и выдай краткий ответ. Пиши обычным текстом без LaTeX."
     }
     
     payload = {
@@ -55,25 +54,27 @@ async def ask_aiai(parts: list) -> str:
             async with session.post(AIAI_URL, json=payload, headers=headers, timeout=90) as resp:
                 data = await resp.json()
                 
+                # ВЫВОДИМ РЕАЛЬНУЮ ОШИБКУ
                 if "error" in data:
                     print("ОШИБКА ОТ API:", data["error"])
-                    return "Ошибка сервера. Попробуй еще раз."
+                    error_msg = data["error"].get("message", str(data["error"]))
+                    return f"Ошибка API: {error_msg[:150]}" # Обрезаем, чтобы влезло в телеграм
                 
                 if "choices" in data and len(data["choices"]) > 0:
                     content = data["choices"][0]["message"].get("content")
                     if content and content.strip():
                         return content.strip()
                 
-                return "Не могу разобрать. Попробуй сфотографировать ближе или обрезать фото."
+                return "ИИ вернул пустой ответ (возможно, не увидел текст)."
         except Exception as e:
-            print("ОШИБКА:", e)
-            return "Ошибка."
+            print("ОШИБКА СЕТИ:", e)
+            return "Ошибка сети при запросе к ИИ."
 
 async def solve_photo(image_bytes: bytes, history: list) -> str:
     b64 = base64.b64encode(image_bytes).decode('utf-8')
-    prompt = """Реши задания с фото. 
-    Напиши ТОЛЬКО ответы по номерам (например: 1.178 а) -5, б) 2). 
-    Никаких объяснений и символов LaTeX."""
+    prompt = """Прочитай задания на фото и реши их. 
+    Дай только ответы по номерам. 
+    Без объяснений."""
     
     current_message = {
         "role": "user", 
@@ -159,7 +160,7 @@ async def handle_text(message: Message):
     text = message.text
     if text == "/start":
         user_histories[user_id] = []
-        await message.answer("Привет! 👋 Отправь фото задания (лучше обрезанное), и я выдам готовые ответы без лишних символов.", reply_markup=main_menu)
+        await message.answer("Привет! Отправь фото задания, и я выдам ответы.", reply_markup=main_menu)
         return
         
     if text in ["📸 Решить по фото", "✏️ Задать вопрос"]:
@@ -182,7 +183,7 @@ async def handle_text(message: Message):
     await message.answer(answer[:4000], reply_markup=main_menu)
 
 async def main():
-    print("БОТ ЗАПУЩЕН! LUNA PRO БЕЗ LATEX")
+    print("БОТ ЗАПУЩЕН! GPT-6 LUNA (ОБЫЧНАЯ)")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
